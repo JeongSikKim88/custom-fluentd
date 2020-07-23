@@ -1,0 +1,69 @@
+<system>
+  root_dir /var/log/td-agent         # For handling unrecoverable chunks
+</system>
+
+<source>
+  @type tail
+  path /logdata/access/*.com.log,/logdata/access/*.net.log,/logdata/access/*.kr.log
+  exclude_path ["/logdata/access/*.gz", "/logdata/access/*.zip" ]
+  pos_file /var/log/td-agent/nginx-access.log.pos
+  tag nginx.raw
+  refresh_interval 1s
+  <parse>
+    @type tsv
+    keys domain,date,time,url,sent,res,ret,status,cip,agent,referer,upip,up_status,geo,geoorg,encoding,length,reqlen,timestamp,up1,up2,up3
+    time_key timestamp
+    types sent:integer, res:float, reqlen:integer, up1:float, up2:float, up3:float
+#    null_value_pattern '-'
+#    null_empty_string true
+  </parse>
+</source>
+
+<filter nginx.raw>
+  @type record_modifier
+  remove_keys date, time, encoding, length
+  <record>
+    host "#{Socket.gethostname}"
+  </record>
+  <replace>
+    key agent
+    expression /^$/
+    replace -
+  </replace>
+  <replace>
+    key referer
+    expression /^$/
+    replace -
+  </replace>
+</filter>
+
+<match nginx.*>
+  @type forward
+  <server>
+    host 211.212.37.137
+    port 24224
+  </server>
+  <server>
+    host 211.212.37.138
+    port 24224
+    standby
+  </server>
+  heartbeat_type transport
+  <buffer>
+    flush_interval 1
+    retry_wait 1                      # The wait interval for the first retry.
+    retry_exponential_backoff_base 2  # Inclease the wait time by a factor of N.
+    retry_type exponential_backoff    # Set 'periodic' for constant intervals.
+# retry_max_interval 1h               # Cap the wait interval. (see above)
+    retry_randomize true              # Apply randomization. (see above)
+    retry_timeout 72h                 # Maximum duration before giving up.
+# retry_max_times 17                  # Maximum retry count before giving up.
+    retry_forever false               # Set 'true' for infinite retry loops.
+    retry_secondary_threshold 0.8     # See the "Secondary Output" section in
+  </buffer>
+  <secondary>
+     @type file
+     path /var/log/td-agent/buffer/nginx.raw
+     compress gzip
+  </secondary>
+</match>
